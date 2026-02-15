@@ -13,8 +13,8 @@ export const command = {
         const balance = user ? user.balance.toFixed(2) : '0.00';
 
         const embed = new EmbedBuilder()
-            .setTitle('💰 Your Wallet')
-            .setDescription(`Current Balance: **${balance} Points**`)
+            .setTitle('💰 Portofelul Tău')
+            .setDescription(`Balanța Curentă: **${balance} Puncte**`)
             .setColor(0xFFD700);
 
         await interaction.reply({ embeds: [embed], ephemeral: true });

@@ -20,11 +20,11 @@ export async function registerInteractionHandler() {
                 if (interaction.customId === 'submit_tiktok') {
                     const modal = new ModalBuilder()
                         .setCustomId('tiktok_submission_modal')
-                        .setTitle('Submit TikTok Video');
+                        .setTitle('Trimite Videoclip TikTok');
 
                     const urlInput = new TextInputBuilder()
                         .setCustomId('tiktok_url')
-                        .setLabel("TikTok Video URL")
+                        .setLabel("Link TikTok")
                         .setStyle(TextInputStyle.Short)
                         .setPlaceholder('https://www.tiktok.com/@user/video/...')
                         .setRequired(true);
@@ -35,6 +35,98 @@ export async function registerInteractionHandler() {
                     await interaction.showModal(modal);
                 }
 
+                // YOUR SUBMISSIONS HANDLER
+                if (interaction.customId === 'my_submissions') {
+                    const userId = interaction.user.id;
+                    const submissions = db.prepare('SELECT * FROM Submission WHERE userId = ? ORDER BY createdAt DESC LIMIT 10').all(userId);
+
+                    if (!submissions || submissions.length === 0) {
+                        return interaction.reply({
+                            content: 'ℹ️ **Nu s-au găsit submisii.**\nApasă "Trimite TikTok" pentru a începe!',
+                            ephemeral: true
+                        });
+                    }
+
+                    const fields = submissions.map(sub => ({
+                        name: `📅 ${new Date(sub.createdAt).toLocaleDateString()}`,
+                        value: `🔗 [Vezi Video](${sub.tikTokUrl})\n👀 Vizualizări: **${sub.lastViewCount}**\n💰 Puncte: ${sub.totalPointsEarned.toFixed(2)} | Status: **${sub.status}**`,
+                        inline: false
+                    }));
+
+                    await interaction.reply({
+                        embeds: [{
+                            title: '📂 Submisile Tale Recente',
+                            color: 0x0099ff,
+                            fields: fields
+                        }],
+                        ephemeral: true
+                    });
+                }
+
+                // SHOP MENU HANDLER
+                if (interaction.customId === 'shop_menu') {
+                    const userId = interaction.user.id;
+                    const user = db.prepare('SELECT balance, ucoins FROM User WHERE id = ?').get(userId);
+
+                    const balance = user ? user.balance.toFixed(2) : '0.00';
+                    const ucoins = user ? (user.ucoins || 0).toFixed(2) : '0.00';
+
+                    const embed = new EmbedBuilder()
+                        .setTitle('🛒 Magazin Utopia')
+                        .setDescription(
+                            `**Portofelul Tău:**\n` +
+                            `💎 Puncte: **${balance}**\n` +
+                            `🪙 UCoins: **${ucoins}**\n\n` +
+                            `**Schimb:**\n` +
+                            `1 Punct = 1 UCoin\n\n` +
+                            `Apasă pe butonul de mai jos pentru a converti toate punctele în UCoins.`
+                        )
+                        .setColor(0xFFA500);
+
+                    const row = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('convert_points')
+                                .setLabel('Transformă Puncte în UCoins')
+                                .setStyle(ButtonStyle.Primary)
+                                .setEmoji('💱')
+                        );
+
+                    await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+                }
+
+                // CONVERT POINTS HANDLER
+                if (interaction.customId === 'convert_points') {
+                    const userId = interaction.user.id;
+
+                    try {
+                        const result = db.transaction(() => {
+                            const user = db.prepare('SELECT balance, ucoins FROM User WHERE id = ?').get(userId);
+                            if (!user || user.balance < 1) {
+                                return { success: false, message: 'Nu ai suficiente puncte (Minim 1).' };
+                            }
+
+                            const transferAmount = user.balance;
+
+                            if (transferAmount <= 0) return { success: false, message: 'Balanță 0.' };
+
+                            db.prepare('UPDATE User SET balance = 0, ucoins = ? WHERE id = ?')
+                                .run((user.ucoins || 0) + transferAmount, userId);
+
+                            return { success: true, amount: transferAmount };
+                        })();
+
+                        if (result.success) {
+                            await interaction.reply({ content: `✅ **Succes!** Ai convertit ${result.amount.toFixed(2)} Puncte în UCoins.`, ephemeral: true });
+                        } else {
+                            await interaction.reply({ content: `❌ **Eroare:** ${result.message}`, ephemeral: true });
+                        }
+                    } catch (err) {
+                        logger.error('Conversion error', err);
+                        await interaction.reply({ content: '❌ Eroare la conversie.', ephemeral: true });
+                    }
+                }
+
                 // VERIFY BUTTON HANDLER
                 if (interaction.customId.startsWith('verify_sub_')) {
                     await interaction.deferReply({ ephemeral: true });
@@ -43,9 +135,35 @@ export async function registerInteractionHandler() {
                     const result = await VerificationService.verifySubmission(submissionId);
 
                     if (result.success) {
-                        await interaction.editReply(`✅ **Success!** ${result.message}`);
+                        await interaction.editReply(`✅ **Succes!** ${result.message}`);
                     } else {
-                        await interaction.editReply(`❌ **Failed:** ${result.message}`);
+                        // Translate common error messages if strictly needed, or ensure service returns generic enough English/Romanian
+                        // For now, let's assume result.message is handled or we just output it. 
+                        // Better: update service to return code, and map here. But for now outputting result.
+                        await interaction.editReply(`❌ **Eșuat:** ${result.message}`);
+                    }
+                }
+
+                // ADMIN DELETE HANDLER
+                if (interaction.customId.startsWith('admin_delete_')) {
+                    if (interaction.user.id !== '1098634271842898071') {
+                        return interaction.reply({ content: '⛔ Nu ai permisiunea.', ephemeral: true });
+                    }
+
+                    const subId = interaction.customId.replace('admin_delete_', '');
+                    try {
+                        // Transaction for Atomic Delete
+                        const deleteTx = db.transaction(() => {
+                            db.prepare('DELETE FROM ViewLog WHERE submissionId = ?').run(subId);
+                            db.prepare('DELETE FROM Submission WHERE id = ?').run(subId);
+                        });
+
+                        deleteTx();
+
+                        await interaction.reply({ content: `🗑️ Submisia a fost ștearsă cu succes.`, ephemeral: true });
+                    } catch (err) {
+                        logger.error('Admin delete error for ID: ' + subId, err);
+                        await interaction.reply({ content: `❌ Eroare la ștergere: ${err.message}`, ephemeral: true });
                     }
                 }
             }
@@ -57,7 +175,14 @@ export async function registerInteractionHandler() {
                     const userId = interaction.user.id;
 
                     if (!tikTokUrl.includes('tiktok.com')) {
-                        await interaction.reply({ content: '❌ Invalid TikTok URL.', ephemeral: true });
+                        await interaction.reply({ content: '❌ Link invalid. Te rog asigură-te că este un link TikTok valid.', ephemeral: true });
+                        return;
+                    }
+
+                    // CHECK FOR DUPLICATES
+                    const existingCheck = db.prepare('SELECT id FROM Submission WHERE tikTokUrl = ?').get(tikTokUrl);
+                    if (existingCheck) {
+                        await interaction.reply({ content: '⚠️ **Acest video a fost deja trimis!**\nFiecare video poate fi trimis o singură dată.', ephemeral: true });
                         return;
                     }
 
@@ -79,21 +204,21 @@ export async function registerInteractionHandler() {
 
                     insertSubmission.run(submissionId, userId, tikTokUrl, verificationCode, 'PENDING');
 
-                    // Confirmation with Button
+                    // Confirmation with Button - ROMANIAN
                     const row = new ActionRowBuilder()
                         .addComponents(
                             new ButtonBuilder()
                                 .setCustomId(`verify_sub_${submissionId}`)
-                                .setLabel('Confirm Verification')
+                                .setLabel('Confirmă Verificarea')
                                 .setStyle(ButtonStyle.Primary)
                                 .setEmoji('📢')
                         );
 
                     await interaction.reply({
-                        content: `✅ **Submission Received!**\n\n` +
-                            `1. Copy this code: **\`${verificationCode}\`**\n` +
-                            `2. Paste it in your **TikTok Bio** or Video Description.\n` +
-                            `3. Click the button below to verify immediately.`,
+                        content: `✅ **Submisie Primită!**\n\n` +
+                            `1. Copiază acest cod: **\`${verificationCode}\`**\n` +
+                            `2. Pune-l în **Bio pe TikTok** sau în Descrierea Videoclipului.\n` +
+                            `3. Apasă butonul de mai jos pentru a verifica.`,
                         components: [row],
                         ephemeral: true
                     });
@@ -102,9 +227,9 @@ export async function registerInteractionHandler() {
         } catch (error) {
             logger.error('Interaction error', error);
             if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ content: 'Error executing command', ephemeral: true });
+                await interaction.reply({ content: 'Eroare la executarea comenzii!', ephemeral: true });
             } else if (interaction.deferred) {
-                await interaction.editReply({ content: 'Error executing command' });
+                await interaction.editReply({ content: 'Eroare la executarea comenzii!' });
             }
         }
     });

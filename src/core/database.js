@@ -7,14 +7,29 @@ export const db = new Database(dbPath); // verbose: console.log
 
 // Initialize Database Schema
 try {
-    db.exec(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS User (
       id TEXT PRIMARY KEY,
       balance REAL DEFAULT 0.0,
+      ucoins REAL DEFAULT 0.0,
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now'))
     );
+  `);
 
+  // Migration for existing tables: Check if ucoins exists, if not add it
+  try {
+    const userTable = db.pragma('table_info(User)');
+    const hasUcoins = userTable.some(col => col.name === 'ucoins');
+    if (!hasUcoins) {
+      db.prepare('ALTER TABLE User ADD COLUMN ucoins REAL DEFAULT 0.0').run();
+      logger.info('Migrated User table: Added ucoins column');
+    }
+  } catch (e) {
+    logger.warn('Migration check failed: ' + e.message);
+  }
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS Submission (
       id TEXT PRIMARY KEY,
       userId TEXT NOT NULL,
@@ -45,8 +60,8 @@ try {
     CREATE INDEX IF NOT EXISTS idx_submission_user ON Submission(userId);
     CREATE INDEX IF NOT EXISTS idx_submission_status ON Submission(status);
   `);
-    logger.info('Database initialized with better-sqlite3');
+  logger.info('Database initialized with better-sqlite3');
 } catch (error) {
-    logger.error('Failed to initialize database schema', error);
-    process.exit(1);
+  logger.error('Failed to initialize database schema', error);
+  process.exit(1);
 }

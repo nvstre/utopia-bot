@@ -8,15 +8,15 @@ export const command = {
 
     async execute(interaction) {
         const embed = new EmbedBuilder()
-            .setTitle('🎥 Affiliate Rewards System')
+            .setTitle('🎥 Sistem de Recompense Utopia')
             .setDescription(
-                'Welcome to the Utopia Affiliate Program!\n\n' +
-                '**How it works:**\n' +
-                '1. Post a TikTok video promoting our brand.\n' +
-                '2. Submit the link here.\n' +
-                '3. Verify ownership of the account.\n' +
-                '4. Earn points for every view your video gets!\n\n' +
-                'Click the buttons below to get started.'
+                'Bine ai venit în Sistemul de Afiliere Utopia!\n\n' +
+                '**Cum funcționează:**\n' +
+                '1. Postează un video pe TikTok promovând brandul nostru.\n' +
+                '2. Trimite link-ul aici.\n' +
+                '3. Verifică deținerea contului.\n' +
+                '4. Câștigă puncte automat pentru fiecare vizualizare!\n\n' +
+                'Apasă butoanele de mai jos pentru a începe.'
             )
             .setColor(0x0095FF);
 
@@ -24,14 +24,19 @@ export const command = {
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId('submit_tiktok')
-                    .setLabel('Submit TikTok')
+                    .setLabel('Trimite TikTok')
                     .setStyle(ButtonStyle.Success)
                     .setEmoji('🎥'),
                 new ButtonBuilder()
                     .setCustomId('my_submissions')
-                    .setLabel('My Submissions')
+                    .setLabel('Submisile Mele')
                     .setStyle(ButtonStyle.Primary)
-                    .setEmoji('📊')
+                    .setEmoji('📊'),
+                new ButtonBuilder()
+                    .setCustomId('shop_menu')
+                    .setLabel('Magazin')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('🛒')
             );
 
         await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });

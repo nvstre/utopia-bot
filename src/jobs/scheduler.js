@@ -50,7 +50,8 @@ export function initScheduler() {
                 const delta = currentViews - lastViews;
 
                 if (delta > 0) {
-                    const pointsEarned = (delta / config.points.viewsPerPoint);
+                    // 1000 views = 1 point
+                    const pointsEarned = (delta / 1000);
 
                     // Transaction: Update Submission & User Balance
                     const updateFn = db.transaction(() => {
