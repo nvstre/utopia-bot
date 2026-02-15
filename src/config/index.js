@@ -13,6 +13,7 @@ export const config = {
         token: process.env.DISCORD_TOKEN,
         clientId: process.env.CLIENT_ID,
         guildId: process.env.GUILD_ID,
+        logChannelId: '1472557512229126319',
     },
     tiktok: {
         rapidApiKey: process.env.RAPID_API_KEY,

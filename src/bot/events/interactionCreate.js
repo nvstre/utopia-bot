@@ -3,6 +3,7 @@ import { client } from '../client.js';
 import { db } from '../../core/database.js';
 import { VerificationService } from '../../services/verification.js';
 import { logger } from '../../core/logger.js';
+import { config } from '../../config/index.js';
 import crypto from 'crypto';
 
 export async function registerInteractionHandler() {
@@ -117,6 +118,20 @@ export async function registerInteractionHandler() {
                         })();
 
                         if (result.success) {
+                            const LogChannelId = config.discord.logChannelId;
+                            const logChannel = interaction.guild.channels.cache.get(LogChannelId);
+
+                            if (logChannel) {
+                                logChannel.send({
+                                    embeds: [
+                                        new EmbedBuilder()
+                                            .setTitle('💸 Schimb Valutar Efectuat')
+                                            .setDescription(`**Utilizator:** <@${userId}>\n**Suma:** ${result.amount.toFixed(2)} Puncte -> UCoins`)
+                                            .setColor(0x00FF00)
+                                            .setTimestamp()
+                                    ]
+                                });
+                            }
                             await interaction.reply({ content: `✅ **Succes!** Ai convertit ${result.amount.toFixed(2)} Puncte în UCoins.`, ephemeral: true });
                         } else {
                             await interaction.reply({ content: `❌ **Eroare:** ${result.message}`, ephemeral: true });
@@ -164,6 +179,20 @@ export async function registerInteractionHandler() {
                     } catch (err) {
                         logger.error('Admin delete error for ID: ' + subId, err);
                         await interaction.reply({ content: `❌ Eroare la ștergere: ${err.message}`, ephemeral: true });
+                    }
+                }
+
+                // ADMIN VERIFY HANDLER
+                if (interaction.customId.startsWith('admin_verify_')) {
+                    if (interaction.user.id !== '1098634271842898071') {
+                        return interaction.reply({ content: '⛔ Nu ai permisiunea.', ephemeral: true });
+                    }
+                    const subId = interaction.customId.replace('admin_verify_', '');
+                    try {
+                        db.prepare("UPDATE Submission SET status = 'APPROVED', updatedAt = datetime('now') WHERE id = ?").run(subId);
+                        await interaction.reply({ content: `✅ Submisia a fost verificată manual.`, ephemeral: true });
+                    } catch (err) {
+                        await interaction.reply({ content: `❌ Eroare: ${err.message}`, ephemeral: true });
                     }
                 }
             }
@@ -222,6 +251,31 @@ export async function registerInteractionHandler() {
                         components: [row],
                         ephemeral: true
                     });
+                }
+                if (interaction.customId === 'admin_manual_verify_modal') {
+                    const subId = interaction.fields.getTextInputValue('submission_id');
+                    try {
+                        db.prepare("UPDATE Submission SET status = 'APPROVED', updatedAt = datetime('now') WHERE id = ?").run(subId);
+                        await interaction.reply({ content: `✅ Submisia ${subId} a fost verificată.`, ephemeral: true });
+                    } catch (e) {
+                        await interaction.reply({ content: `❌ Eroare: ${e.message}`, ephemeral: true });
+                    }
+                }
+
+                if (interaction.customId === 'admin_check_user_modal') {
+                    const targetUserId = interaction.fields.getTextInputValue('user_id');
+                    const submissions = db.prepare('SELECT * FROM Submission WHERE userId = ? ORDER BY createdAt DESC LIMIT 5').all(targetUserId);
+                    if (!submissions.length) return interaction.reply({ content: 'Acest user nu are submisii.', ephemeral: true });
+
+                    const embed = new EmbedBuilder().setTitle(`🔎 Submisii pt User: ${targetUserId}`).setColor(0xFF0000);
+                    submissions.forEach((sub) => {
+                        embed.addFields({
+                            name: `ID: ${sub.id.split('-')[0]}...`,
+                            value: `🔗 [Link](${sub.tikTokUrl}) | 👀 ${sub.lastViewCount} | ${sub.status}`
+                        });
+                    });
+
+                    await interaction.reply({ embeds: [embed], ephemeral: true });
                 }
             }
         } catch (error) {

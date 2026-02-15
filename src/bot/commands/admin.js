@@ -10,47 +10,41 @@ export const command = {
 
     async execute(interaction) {
         if (interaction.user.id !== ADMIN_ID) {
-            return interaction.reply({ content: '⛔ You are not authorized to use this command.', ephemeral: true });
-        }
-
-        const recentSubmissions = db.prepare(`
-      SELECT * FROM Submission 
-      ORDER BY createdAt DESC 
-      LIMIT 5
-    `).all();
-
-        if (recentSubmissions.length === 0) {
-            return interaction.reply({ content: 'Nu s-au găsit submisii în baza de date.', ephemeral: true });
+            return interaction.reply({ content: '⛔ Nu ai permisiunea de a folosi acest panou.', ephemeral: true });
         }
 
         const embed = new EmbedBuilder()
-            .setTitle('🛡️ Panou Admin - Submisii Recente')
-            .setColor(0xFF0000);
+            .setTitle('🛡️ Panou Principal Admin')
+            .setDescription('Selectează o opțiune din meniul de mai jos:')
+            .setColor(0xFF0000)
+            .addFields(
+                { name: '📂 Submisii Recente', value: 'Vezi ultimele videoclipuri trimise.' },
+                { name: '👤 Verifică Utilizator', value: 'Caută submisii după ID-ul utilizatorului.' },
+                { name: '✅ Verificare Manuală', value: 'Aprobă manual o submisie după ID.' }
+            );
 
-        const rows = [];
-
-        recentSubmissions.forEach((sub, index) => {
-            embed.addFields({
-                name: `ID: ${sub.id.split('-')[0]}... | Utilizator: ${sub.userId}`,
-                value: `🔗 [Link](${sub.tikTokUrl}) | Status: **${sub.status}**\nDată: ${new Date(sub.createdAt).toLocaleTimeString()}`
-            });
-
-            // Create a delete button for this submission
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`admin_delete_${sub.id}`)
-                        .setLabel(`Șterge #${index + 1}`)
-                        .setStyle(ButtonStyle.Danger)
-                );
-            rows.push(row);
-        });
-
-        // Discord allows max 5 action rows. We are showing top 5, so 5 rows is perfect.
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('admin_view_recent')
+                    .setLabel('Submisii Recente')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('📂'),
+                new ButtonBuilder()
+                    .setCustomId('admin_check_user_btn')
+                    .setLabel('Verifică User')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('👤'),
+                new ButtonBuilder()
+                    .setCustomId('admin_manual_verify_btn')
+                    .setLabel('Verificare Manuală')
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('✅')
+            );
 
         await interaction.reply({
             embeds: [embed],
-            components: rows,
+            components: [row],
             ephemeral: true
         });
     }

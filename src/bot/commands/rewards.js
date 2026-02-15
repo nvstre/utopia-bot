@@ -3,8 +3,8 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'disc
 
 export const command = {
     data: new SlashCommandBuilder()
-        .setName('rewards')
-        .setDescription('Access the Affiliate Rewards System'),
+        .setName('menu')
+        .setDescription('Deschide meniul principal Utopia'),
 
     async execute(interaction) {
         const embed = new EmbedBuilder()
