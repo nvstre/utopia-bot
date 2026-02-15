@@ -144,7 +144,7 @@ export async function registerInteractionHandler() {
                         const row = new ActionRowBuilder()
                             .addComponents(
                                 new ButtonBuilder()
-                                    .setCustomId('convert_points')
+                                    .setCustomId('shop_convert_modal_btn')
                                     .setLabel('Transformă Puncte în UCoins')
                                     .setStyle(ButtonStyle.Primary)
                                     .setEmoji('💱')
@@ -157,50 +157,37 @@ export async function registerInteractionHandler() {
                     }
                 }
 
-                // CONVERT POINTS HANDLER
+                // OPEN SHOP CONVERSION MODAL
+                if (interaction.customId === 'shop_convert_modal_btn') {
+                    const modal = new ModalBuilder()
+                        .setCustomId('shop_convert_modal_submission')
+                        .setTitle('💱 Convertire Puncte -> UCoins');
+
+                    const amountInput = new TextInputBuilder()
+                        .setCustomId('convert_amount')
+                        .setLabel("Suma de puncte de convertit")
+                        .setStyle(TextInputStyle.Short)
+                        .setPlaceholder('Ex: 100')
+                        .setRequired(true);
+
+                    const usernameInput = new TextInputBuilder()
+                        .setCustomId('ingame_username')
+                        .setLabel("Numele tău din joc (IGN)")
+                        .setStyle(TextInputStyle.Short)
+                        .setPlaceholder('Ex: RoGamer123')
+                        .setRequired(true);
+
+                    modal.addComponents(
+                        new ActionRowBuilder().addComponents(amountInput),
+                        new ActionRowBuilder().addComponents(usernameInput)
+                    );
+
+                    await interaction.showModal(modal);
+                }
+
+                // OLD HANDLER REMOVED - Logic moved to ModalSubmit
                 if (interaction.customId === 'convert_points') {
-                    const userId = interaction.user.id;
-
-                    try {
-                        const result = db.transaction(() => {
-                            const user = db.prepare('SELECT balance, ucoins FROM User WHERE id = ?').get(userId);
-                            if (!user || user.balance < 1) {
-                                return { success: false, message: 'Nu ai suficiente puncte (Minim 1).' };
-                            }
-
-                            const transferAmount = user.balance;
-
-                            if (transferAmount <= 0) return { success: false, message: 'Balanță 0.' };
-
-                            db.prepare('UPDATE User SET balance = 0, ucoins = ? WHERE id = ?')
-                                .run((user.ucoins || 0) + transferAmount, userId);
-
-                            return { success: true, amount: transferAmount };
-                        })();
-
-                        if (result.success) {
-                            const LogChannelId = config.discord.logChannelId;
-                            const logChannel = interaction.guild.channels.cache.get(LogChannelId);
-
-                            if (logChannel) {
-                                logChannel.send({
-                                    embeds: [
-                                        new EmbedBuilder()
-                                            .setTitle('💸 Schimb Valutar Efectuat')
-                                            .setDescription(`**Utilizator:** <@${userId}>\n**Suma:** ${result.amount.toFixed(2)} Puncte -> UCoins`)
-                                            .setColor(0x00FF00)
-                                            .setTimestamp()
-                                    ]
-                                });
-                            }
-                            await interaction.reply({ content: `✅ **Succes!** Ai convertit ${result.amount.toFixed(2)} Puncte în UCoins.`, ephemeral: true });
-                        } else {
-                            await interaction.reply({ content: `❌ **Eroare:** ${result.message}`, ephemeral: true });
-                        }
-                    } catch (err) {
-                        logger.error('Conversion error', err);
-                        await interaction.reply({ content: '❌ Eroare la conversie.', ephemeral: true });
-                    }
+                    await interaction.reply({ content: '❌ Această funcție a fost actualizată. Te rog redeschide meniul.', ephemeral: true });
                 }
 
                 // VERIFY BUTTON HANDLER
@@ -250,6 +237,74 @@ export async function registerInteractionHandler() {
                         await interaction.reply({ content: `✅ Submisia a fost verificată manual.`, ephemeral: true });
                     } catch (err) {
                         await interaction.reply({ content: `❌ Eroare: ${err.message}`, ephemeral: true });
+                    }
+                }
+
+                // ADMIN SHOP APPROVE
+                if (interaction.customId.startsWith('shop_approve_')) {
+                    console.log('[DEBUG] Shop Approve Clicked:', interaction.customId);
+                    // ID format: shop_approve_USERID_AMOUNT
+                    const parts = interaction.customId.split('_');
+                    const targetUserId = parts[2];
+                    const amount = parseFloat(parts[3]);
+
+                    await interaction.deferUpdate(); // Defer immediately to prevent timeout
+
+                    try {
+                        db.prepare('UPDATE User SET ucoins = ucoins + ? WHERE id = ?').run(amount, targetUserId);
+
+                        const embed = EmbedBuilder.from(interaction.message.embeds[0]);
+                        embed.setColor(0x00FF00); // Green
+                        embed.setTitle('✅ Cerere Schimb Valutar - FINALIZAT');
+
+                        await interaction.editReply({ embeds: [embed], components: [] });
+
+                        // DM User
+                        try {
+                            const targetUser = await client.users.fetch(targetUserId);
+                            await targetUser.send(`✅ **Schimb Finalizat!**\nAdminul a confirmat schimbul tău de **${amount}** puncte. Verifică contul.`);
+                        } catch (dmErr) {
+                            console.log('[WARN] Could not DM user', dmErr);
+                            // Do not fail the whole interaction if DM fails
+                            await interaction.followUp({ content: `✅ Aprobat, dar nu am putut trimite DM userului (${dmErr.message}).`, ephemeral: true });
+                        }
+                    } catch (err) {
+                        logger.error('Approve Error', err);
+                        await interaction.followUp({ content: '❌ Eroare la aprobare: ' + err.message, ephemeral: true });
+                    }
+                }
+
+                // ADMIN SHOP DECLINE (REFUND)
+                if (interaction.customId.startsWith('shop_decline_')) {
+                    console.log('[DEBUG] Shop Decline Clicked:', interaction.customId);
+                    const parts = interaction.customId.split('_');
+                    const targetUserId = parts[2];
+                    const amount = parseFloat(parts[3]);
+
+                    await interaction.deferUpdate();
+
+                    try {
+                        // Refund Points
+                        db.prepare('UPDATE User SET balance = balance + ? WHERE id = ?').run(amount, targetUserId);
+
+                        const embed = EmbedBuilder.from(interaction.message.embeds[0]);
+                        embed.setColor(0xFF0000); // Red
+                        embed.setTitle('⛔ Cerere Schimb Valutar - RESPINS');
+                        embed.setFooter({ text: `Respins de ${interaction.user.tag}` });
+
+                        await interaction.editReply({ embeds: [embed], components: [] });
+
+                        // DM User
+                        try {
+                            const targetUser = await client.users.fetch(targetUserId);
+                            await targetUser.send(`⛔ **Cerere Respinsă.**\nSchimbul tău de **${amount}** puncte a fost respins. Punctele au fost returnate în cont.`);
+                        } catch (dmErr) {
+                            console.log('[WARN] Could not DM user', dmErr);
+                            await interaction.followUp({ content: `⛔ Respins (Refund OK), dar nu am putut trimite DM userului (${dmErr.message}).`, ephemeral: true });
+                        }
+                    } catch (err) {
+                        logger.error('Decline Error', err);
+                        await interaction.followUp({ content: '❌ Eroare la respingere: ' + err.message, ephemeral: true });
                     }
                 }
             }
@@ -334,6 +389,80 @@ export async function registerInteractionHandler() {
 
                     await interaction.reply({ embeds: [embed], ephemeral: true });
                 }
+
+                // SHOP CONVERSION MODAL SUBMIT
+                if (interaction.customId === 'shop_convert_modal_submission') {
+                    const userId = interaction.user.id;
+                    const amountRaw = interaction.fields.getTextInputValue('convert_amount');
+                    const ingameName = interaction.fields.getTextInputValue('ingame_username');
+
+                    const amountToConvert = parseInt(amountRaw);
+
+                    if (isNaN(amountToConvert) || amountToConvert < 1) {
+                        return interaction.reply({ content: '❌ Suma invalidă. Te rog introdu un număr întreg (min 1), fără virgule sau puncte.', ephemeral: true });
+                    }
+
+                    try {
+                        const result = db.transaction(() => {
+                            const user = db.prepare('SELECT balance, ucoins FROM User WHERE id = ?').get(userId);
+                            if (!user || user.balance < amountToConvert) {
+                                return { success: false, message: `Nu ai suficiente puncte. Ai doar **${user ? user.balance.toFixed(2) : 0}**.` };
+                            }
+
+                            // DEDUCT POINTS ONLY (Do not add UCoins yet)
+                            db.prepare('UPDATE User SET balance = balance - ? WHERE id = ?').run(amountToConvert, userId);
+
+                            return { success: true, amount: amountToConvert, remaining: user.balance - amountToConvert };
+                        })();
+
+                        if (result.success) {
+                            const LogChannelId = config.discord.logChannelId;
+                            const logChannel = interaction.guild.channels.cache.get(LogChannelId);
+
+                            if (logChannel) {
+                                const actionRow = new ActionRowBuilder().addComponents(
+                                    new ButtonBuilder()
+                                        .setCustomId(`shop_approve_${userId}_${amountToConvert}`)
+                                        .setLabel('✅ Finalizat (Aprobă)')
+                                        .setStyle(ButtonStyle.Success),
+                                    new ButtonBuilder()
+                                        .setCustomId(`shop_decline_${userId}_${amountToConvert}`)
+                                        .setLabel('⛔ Respinge (Refund)')
+                                        .setStyle(ButtonStyle.Danger)
+                                );
+
+                                await logChannel.send({
+                                    embeds: [
+                                        new EmbedBuilder()
+                                            .setTitle('💸 Cerere Schimb Valutar - PENDING')
+                                            .setDescription(
+                                                `**Discord User:** <@${userId}> (${interaction.user.tag})\n` +
+                                                `**IGN:** \`${ingameName}\`\n` +
+                                                `**Suma:** ${result.amount.toFixed(2)} Puncte\n\n` +
+                                                `⚠️ **Acțiune necesară:** Verifică dacă ai transferat bunurile în joc, apoi apasă pe Finalizat.`
+                                            )
+                                            .setColor(0xFFA500) // Orange for Pending
+                                            .setTimestamp()
+                                    ],
+                                    components: [actionRow]
+                                });
+                            }
+
+                            // Send confirmation to user
+                            await interaction.reply({
+                                content: `✅ **Cerere trimisă!**\nSuma de **${result.amount.toFixed(2)}** puncte a fost rezervată.\nUn administrator va verifica cererea și vei primi un mesaj când schimbul este finalizat.`,
+                                ephemeral: true
+                            });
+
+                        } else {
+                            await interaction.reply({ content: `❌ **Eroare:** ${result.message}`, ephemeral: true });
+                        }
+                    } catch (err) {
+                        logger.error('Shop conversion error', err);
+                        await interaction.reply({ content: '❌ Eroare internă la conversie.', ephemeral: true });
+                    }
+                }
+
             }
         } catch (error) {
             logger.error('Interaction error', error);
