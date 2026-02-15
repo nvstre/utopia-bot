@@ -22,6 +22,29 @@ export async function registerInteractionHandler() {
 
             // Buttons
             if (interaction.isButton()) {
+                // ADMIN DELETE HANDLER (Moved to top for priority)
+                if (interaction.customId.startsWith('admin_delete_')) {
+                    console.log('[DEBUG] Admin Delete Button Clicked:', interaction.customId);
+                    if (interaction.user.id !== '1098634271842898071') {
+                        return interaction.reply({ content: '⛔ Nu ai permisiunea.', ephemeral: true });
+                    }
+
+                    const subId = interaction.customId.replace('admin_delete_', '');
+                    try {
+                        const deleteTx = db.transaction(() => {
+                            db.prepare('DELETE FROM ViewLog WHERE submissionId = ?').run(subId);
+                            db.prepare('DELETE FROM Submission WHERE id = ?').run(subId);
+                        });
+
+                        deleteTx();
+
+                        await interaction.reply({ content: `🗑️ Submisia a fost ștearsă cu succes.`, ephemeral: true });
+                    } catch (err) {
+                        logger.error('Admin delete error for ID: ' + subId, err);
+                        await interaction.reply({ content: `❌ Eroare la ștergere: ${err.message}`, ephemeral: true });
+                    }
+                    return; // Stop further processing
+                }
                 if (interaction.customId === 'submit_tiktok') {
                     const modal = new ModalBuilder()
                         .setCustomId('tiktok_submission_modal')
@@ -224,26 +247,7 @@ export async function registerInteractionHandler() {
                 }
 
                 // ADMIN DELETE HANDLER
-                if (interaction.customId.startsWith('admin_delete_')) {
-                    if (interaction.user.id !== '1098634271842898071') {
-                        return interaction.reply({ content: '⛔ Nu ai permisiunea.', ephemeral: true });
-                    }
 
-                    const subId = interaction.customId.replace('admin_delete_', '');
-                    try {
-                        const deleteTx = db.transaction(() => {
-                            db.prepare('DELETE FROM ViewLog WHERE submissionId = ?').run(subId);
-                            db.prepare('DELETE FROM Submission WHERE id = ?').run(subId);
-                        });
-
-                        deleteTx();
-
-                        await interaction.reply({ content: `🗑️ Submisia a fost ștearsă cu succes.`, ephemeral: true });
-                    } catch (err) {
-                        logger.error('Admin delete error for ID: ' + subId, err);
-                        await interaction.reply({ content: `❌ Eroare la ștergere: ${err.message}`, ephemeral: true });
-                    }
-                }
 
                 // ADMIN VERIFY HANDLER
                 if (interaction.customId.startsWith('admin_verify_')) {
