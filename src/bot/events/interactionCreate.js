@@ -1,4 +1,4 @@
-import { Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
 import { client } from '../client.js';
 import { db } from '../../core/database.js';
 import { VerificationService } from '../../services/verification.js';
@@ -69,39 +69,7 @@ export async function registerInteractionHandler() {
                 }
 
                 // ADMIN DASHBOARD & BUTTONS
-                if (interaction.customId === 'admin_view_recent') {
-                    if (interaction.user.id !== '1098634271842898071') return interaction.reply({ content: '⛔', ephemeral: true });
 
-                    try {
-                        const recentSubmissions = db.prepare('SELECT * FROM Submission ORDER BY createdAt DESC LIMIT 5').all();
-
-                        if (!recentSubmissions || recentSubmissions.length === 0) {
-                            return interaction.reply({ content: 'ℹ️ **Nu s-au găsit submisii.**', ephemeral: true });
-                        }
-
-                        const embed = new EmbedBuilder().setTitle('🛡️ Submisii Recente').setColor(0xFF0000);
-                        const rows = [];
-
-                        recentSubmissions.forEach((sub, index) => {
-                            const isSus = sub.lastViewCount > 100000;
-                            const statusIcon = isSus ? '⚠️ SUSPICIOUS' : sub.status;
-                            embed.addFields({
-                                name: `ID: ${sub.id.split('-')[0]}... | User: <@${sub.userId}>`,
-                                value: `🔗 [Link](${sub.tikTokUrl})\n👀 Views: **${sub.lastViewCount}** | Status: **${statusIcon}**`
-                            });
-                            rows.push(new ActionRowBuilder().addComponents(
-                                new ButtonBuilder().setCustomId(`admin_delete_${sub.id}`).setLabel('Șterge').setStyle(ButtonStyle.Danger),
-                                new ButtonBuilder().setCustomId(`admin_verify_${sub.id}`).setLabel('Verifică').setStyle(ButtonStyle.Success)
-                            ));
-                        });
-
-                        if (rows.length > 5) rows.length = 5;
-                        await interaction.reply({ embeds: [embed], components: rows, ephemeral: true });
-                    } catch (error) {
-                        logger.error('Admin View Recent Error', error);
-                        await interaction.reply({ content: '❌ Eroare la afișarea submisiilor.', ephemeral: true });
-                    }
-                }
 
                 if (interaction.customId === 'admin_manual_verify_btn') {
                     if (interaction.user.id !== '1098634271842898071') return interaction.reply({ content: '⛔', ephemeral: true });
@@ -117,6 +85,57 @@ export async function registerInteractionHandler() {
                     const idInput = new TextInputBuilder().setCustomId('user_id').setLabel("User ID").setStyle(TextInputStyle.Short).setRequired(true);
                     modal.addComponents(new ActionRowBuilder().addComponents(idInput));
                     await interaction.showModal(modal);
+                }
+
+                if (interaction.customId === 'admin_manual_delete_btn') {
+                    if (interaction.user.id !== '1098634271842898071') return interaction.reply({ content: '⛔', ephemeral: true });
+                    const modal = new ModalBuilder().setCustomId('admin_manual_delete_modal').setTitle('Șterge Submisie Manual');
+                    const idInput = new TextInputBuilder().setCustomId('submission_id').setLabel("ID Submisie").setStyle(TextInputStyle.Short).setRequired(true);
+                    modal.addComponents(new ActionRowBuilder().addComponents(idInput));
+                    await interaction.showModal(modal);
+                }
+
+                if (interaction.customId === 'admin_view_recent') {
+                    // Defer reply because fetching users might take > 3 seconds
+                    await interaction.deferReply({ ephemeral: true });
+
+                    const submissions = db.prepare('SELECT * FROM Submission ORDER BY createdAt DESC LIMIT 15').all();
+
+                    if (!submissions || submissions.length === 0) {
+                        return interaction.editReply({ content: '❌ Nu există submisii recente.' });
+                    }
+
+                    // Fetch Users in Parallel
+                    const userPromises = submissions.map(sub => client.users.fetch(sub.userId).catch(() => null));
+                    const users = await Promise.all(userPromises);
+
+                    const options = submissions.map((sub, index) => {
+                        const user = users[index];
+                        const username = user ? user.tag : 'Unknown User';
+                        const shortId = sub.id.substring(0, 8);
+
+                        let emoji = '📅';
+                        if (sub.status === 'APPROVED') emoji = '✅';
+                        if (sub.status === 'REJECTED') emoji = '⛔';
+
+                        return {
+                            label: `${emoji} ${username} | ${sub.lastViewCount} Vizualizări`,
+                            description: `ID: ${shortId}... | Status: ${sub.status} | Data: ${new Date(sub.createdAt).toLocaleDateString()}`,
+                            value: sub.id
+                        };
+                    });
+
+                    const selectMenu = new StringSelectMenuBuilder()
+                        .setCustomId('admin_select_submission')
+                        .setPlaceholder('🔍 Selectează o submisie recentă...')
+                        .addOptions(options);
+
+                    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+                    await interaction.editReply({
+                        content: `**📂 Ultimele 15 Submisii (Detalii Complete):**\nSelectează o submisie pentru a vedea link-ul și opțiunile.`,
+                        components: [row]
+                    });
                 }
 
                 // SHOP MENU HANDLER
@@ -374,96 +393,210 @@ export async function registerInteractionHandler() {
                     }
                 }
 
-                if (interaction.customId === 'admin_check_user_modal') {
-                    const targetUserId = interaction.fields.getTextInputValue('user_id');
-                    const submissions = db.prepare('SELECT * FROM Submission WHERE userId = ? ORDER BY createdAt DESC LIMIT 5').all(targetUserId);
-                    if (!submissions.length) return interaction.reply({ content: 'Acest user nu are submisii.', ephemeral: true });
-
-                    const embed = new EmbedBuilder().setTitle(`🔎 Submisii pt User: ${targetUserId}`).setColor(0xFF0000);
-                    submissions.forEach((sub) => {
-                        embed.addFields({
-                            name: `ID: ${sub.id.split('-')[0]}...`,
-                            value: `🔗 [Link](${sub.tikTokUrl}) | 👀 ${sub.lastViewCount} | ${sub.status}`
+                if (interaction.customId === 'admin_manual_delete_modal') {
+                    const subId = interaction.fields.getTextInputValue('submission_id');
+                    try {
+                        const deleteTx = db.transaction(() => {
+                            db.prepare('DELETE FROM ViewLog WHERE submissionId = ?').run(subId);
+                            const info = db.prepare('DELETE FROM Submission WHERE id = ?').run(subId);
+                            return info.changes;
                         });
+
+                        const changes = deleteTx();
+
+                        if (changes > 0) {
+                            await interaction.reply({ content: `✅ Submisia \`${subId}\` a fost ștearsă definitiv.`, ephemeral: true });
+                        } else {
+                            await interaction.reply({ content: `⚠️ Nu am găsit nicio submisie cu ID-ul \`${subId}\`.`, ephemeral: true });
+                        }
+                    } catch (e) {
+                        logger.error('Manual Delete Error', e);
+                        await interaction.reply({ content: `❌ Eroare la ștergere: ${e.message}`, ephemeral: true });
+                    }
+                }
+
+                if (interaction.customId === 'admin_view_recent') {
+                    // Defer reply because fetching users might take > 3 seconds
+                    await interaction.deferReply({ ephemeral: true });
+
+                    const submissions = db.prepare('SELECT * FROM Submission ORDER BY createdAt DESC LIMIT 15').all();
+
+                    if (!submissions || submissions.length === 0) {
+                        return interaction.editReply({ content: '❌ Nu există submisii recente.' });
+                    }
+
+                    // Fetch Users in Parallel
+                    const userPromises = submissions.map(sub => client.users.fetch(sub.userId).catch(() => null));
+                    const users = await Promise.all(userPromises);
+
+                    const options = submissions.map((sub, index) => {
+                        const user = users[index];
+                        const username = user ? user.tag : 'Unknown User';
+                        const shortId = sub.id.substring(0, 8);
+
+                        let emoji = '📅';
+                        if (sub.status === 'APPROVED') emoji = '✅';
+                        if (sub.status === 'REJECTED') emoji = '⛔';
+
+                        return {
+                            label: `${emoji} ${username} | ${sub.lastViewCount} Vizualizări`,
+                            description: `ID: ${shortId}... | Status: ${sub.status} | Data: ${new Date(sub.createdAt).toLocaleDateString()}`,
+                            value: sub.id
+                        };
                     });
 
-                    await interaction.reply({ embeds: [embed], ephemeral: true });
+                    const selectMenu = new StringSelectMenuBuilder()
+                        .setCustomId('admin_select_submission')
+                        .setPlaceholder('🔍 Selectează o submisie recentă...')
+                        .addOptions(options);
+
+                    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+                    await interaction.editReply({
+                        content: `**📂 Ultimele 15 Submisii (Detalii Complete):**\nSelectează o submisie pentru a vedea link-ul și opțiunile.`,
+                        components: [row]
+                    });
                 }
 
-                // SHOP CONVERSION MODAL SUBMIT
-                if (interaction.customId === 'shop_convert_modal_submission') {
-                    const userId = interaction.user.id;
-                    const amountRaw = interaction.fields.getTextInputValue('convert_amount');
-                    const ingameName = interaction.fields.getTextInputValue('ingame_username');
+                if (interaction.customId === 'admin_check_user_modal') {
+                    const targetUserId = interaction.fields.getTextInputValue('user_id');
+                    const submissions = db.prepare('SELECT * FROM Submission WHERE userId = ? ORDER BY createdAt DESC LIMIT 10').all(targetUserId);
 
-                    const amountToConvert = parseInt(amountRaw);
-
-                    if (isNaN(amountToConvert) || amountToConvert < 1) {
-                        return interaction.reply({ content: '❌ Suma invalidă. Te rog introdu un număr întreg (min 1), fără virgule sau puncte.', ephemeral: true });
+                    if (!submissions || submissions.length === 0) {
+                        return interaction.reply({ content: '❌ Acest user nu are submisii înregistrate.', ephemeral: true });
                     }
 
-                    try {
-                        const result = db.transaction(() => {
-                            const user = db.prepare('SELECT balance, ucoins FROM User WHERE id = ?').get(userId);
-                            if (!user || user.balance < amountToConvert) {
-                                return { success: false, message: `Nu ai suficiente puncte. Ai doar **${user ? user.balance.toFixed(2) : 0}**.` };
-                            }
+                    // Create Select Menu Options
+                    const options = submissions.map(sub => ({
+                        label: `📅 ${new Date(sub.createdAt).toLocaleDateString()} - ${sub.status}`,
+                        description: `Stats: ${sub.lastViewCount} views | ID: ${sub.id.substring(0, 8)}...`,
+                        value: sub.id
+                    }));
 
-                            // DEDUCT POINTS ONLY (Do not add UCoins yet)
-                            db.prepare('UPDATE User SET balance = balance - ? WHERE id = ?').run(amountToConvert, userId);
+                    const selectMenu = new StringSelectMenuBuilder()
+                        .setCustomId('admin_select_submission')
+                        .setPlaceholder('Selectează o submisie pentru acțiuni...')
+                        .addOptions(options);
 
-                            return { success: true, amount: amountToConvert, remaining: user.balance - amountToConvert };
-                        })();
+                    const row = new ActionRowBuilder().addComponents(selectMenu);
 
-                        if (result.success) {
-                            const LogChannelId = config.discord.logChannelId;
-                            const logChannel = interaction.guild.channels.cache.get(LogChannelId);
-
-                            if (logChannel) {
-                                const actionRow = new ActionRowBuilder().addComponents(
-                                    new ButtonBuilder()
-                                        .setCustomId(`shop_approve_${userId}_${amountToConvert}`)
-                                        .setLabel('✅ Finalizat (Aprobă)')
-                                        .setStyle(ButtonStyle.Success),
-                                    new ButtonBuilder()
-                                        .setCustomId(`shop_decline_${userId}_${amountToConvert}`)
-                                        .setLabel('⛔ Respinge (Refund)')
-                                        .setStyle(ButtonStyle.Danger)
-                                );
-
-                                await logChannel.send({
-                                    embeds: [
-                                        new EmbedBuilder()
-                                            .setTitle('💸 Cerere Schimb Valutar - PENDING')
-                                            .setDescription(
-                                                `**Discord User:** <@${userId}> (${interaction.user.tag})\n` +
-                                                `**IGN:** \`${ingameName}\`\n` +
-                                                `**Suma:** ${result.amount.toFixed(2)} Puncte\n\n` +
-                                                `⚠️ **Acțiune necesară:** Verifică dacă ai transferat bunurile în joc, apoi apasă pe Finalizat.`
-                                            )
-                                            .setColor(0xFFA500) // Orange for Pending
-                                            .setTimestamp()
-                                    ],
-                                    components: [actionRow]
-                                });
-                            }
-
-                            // Send confirmation to user
-                            await interaction.reply({
-                                content: `✅ **Cerere trimisă!**\nSuma de **${result.amount.toFixed(2)}** puncte a fost rezervată.\nUn administrator va verifica cererea și vei primi un mesaj când schimbul este finalizat.`,
-                                ephemeral: true
-                            });
-
-                        } else {
-                            await interaction.reply({ content: `❌ **Eroare:** ${result.message}`, ephemeral: true });
-                        }
-                    } catch (err) {
-                        logger.error('Shop conversion error', err);
-                        await interaction.reply({ content: '❌ Eroare internă la conversie.', ephemeral: true });
-                    }
+                    await interaction.reply({
+                        content: ` **Submisii pentru userul:** ${targetUserId}\nSelectează una din lista de mai jos pentru a o sterge sau verifica.`,
+                        components: [row],
+                        ephemeral: true
+                    });
                 }
-
             }
+
+            // String Select Menu Handler
+            if (interaction.isStringSelectMenu()) {
+                if (interaction.customId === 'admin_select_submission') {
+                    const submissionId = interaction.values[0];
+                    const submission = db.prepare('SELECT * FROM Submission WHERE id = ?').get(submissionId);
+
+                    if (!submission) {
+                        return interaction.reply({ content: '❌ Submisia nu mai există.', ephemeral: true });
+                    }
+
+                    const embed = new EmbedBuilder()
+                        .setTitle('🛡️ Detalii Submisie')
+                        .setColor(0x0099FF)
+                        .addFields(
+                            { name: '� User', value: `<@${submission.userId}>`, inline: true },
+                            { name: '�🔗 TikTok', value: `[Link Video](${submission.tikTokUrl})`, inline: true },
+                            { name: '👀 Views', value: `${submission.lastViewCount}`, inline: true },
+                            { name: '💰 Puncte', value: `${submission.totalPointsEarned.toFixed(2)}`, inline: true },
+                            { name: '📢 Status', value: `**${submission.status}**`, inline: true },
+                            { name: '🆔 ID', value: `\`${submission.id.substring(0, 8)}\``, inline: true }
+                        );
+
+                    const row = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`admin_verify_${submission.id}`)
+                            .setLabel('✅ Verifică Manual')
+                            .setStyle(ButtonStyle.Success)
+                            .setDisabled(submission.status === 'APPROVED'),
+                        new ButtonBuilder()
+                            .setCustomId(`admin_delete_${submission.id}`)
+                            .setLabel('🗑️ Șterge Definitiv')
+                            .setStyle(ButtonStyle.Danger)
+                    );
+
+                    await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+                }
+            }      // SHOP CONVERSION MODAL SUBMIT
+            if (interaction.customId === 'shop_convert_modal_submission') {
+                const userId = interaction.user.id;
+                const amountRaw = interaction.fields.getTextInputValue('convert_amount');
+                const ingameName = interaction.fields.getTextInputValue('ingame_username');
+
+                const amountToConvert = parseInt(amountRaw);
+
+                if (isNaN(amountToConvert) || amountToConvert < 1) {
+                    return interaction.reply({ content: '❌ Suma invalidă. Te rog introdu un număr întreg (min 1), fără virgule sau puncte.', ephemeral: true });
+                }
+
+                try {
+                    const result = db.transaction(() => {
+                        const user = db.prepare('SELECT balance, ucoins FROM User WHERE id = ?').get(userId);
+                        if (!user || user.balance < amountToConvert) {
+                            return { success: false, message: `Nu ai suficiente puncte. Ai doar **${user ? user.balance.toFixed(2) : 0}**.` };
+                        }
+
+                        // DEDUCT POINTS ONLY (Do not add UCoins yet)
+                        db.prepare('UPDATE User SET balance = balance - ? WHERE id = ?').run(amountToConvert, userId);
+
+                        return { success: true, amount: amountToConvert, remaining: user.balance - amountToConvert };
+                    })();
+
+                    if (result.success) {
+                        const LogChannelId = config.discord.logChannelId;
+                        const logChannel = interaction.guild.channels.cache.get(LogChannelId);
+
+                        if (logChannel) {
+                            const actionRow = new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId(`shop_approve_${userId}_${amountToConvert}`)
+                                    .setLabel('✅ Finalizat (Aprobă)')
+                                    .setStyle(ButtonStyle.Success),
+                                new ButtonBuilder()
+                                    .setCustomId(`shop_decline_${userId}_${amountToConvert}`)
+                                    .setLabel('⛔ Respinge (Refund)')
+                                    .setStyle(ButtonStyle.Danger)
+                            );
+
+                            await logChannel.send({
+                                embeds: [
+                                    new EmbedBuilder()
+                                        .setTitle('💸 Cerere Schimb Valutar - PENDING')
+                                        .setDescription(
+                                            `**Discord User:** <@${userId}> (${interaction.user.tag})\n` +
+                                            `**IGN:** \`${ingameName}\`\n` +
+                                            `**Suma:** ${result.amount.toFixed(2)} Puncte\n\n` +
+                                            `⚠️ **Acțiune necesară:** Verifică dacă ai transferat bunurile în joc, apoi apasă pe Finalizat.`
+                                        )
+                                        .setColor(0xFFA500) // Orange for Pending
+                                        .setTimestamp()
+                                ],
+                                components: [actionRow]
+                            });
+                        }
+
+                        // Send confirmation to user
+                        await interaction.reply({
+                            content: `✅ **Cerere trimisă!**\nSuma de **${result.amount.toFixed(2)}** puncte a fost rezervată.\nUn administrator va verifica cererea și vei primi un mesaj când schimbul este finalizat.`,
+                            ephemeral: true
+                        });
+
+                    } else {
+                        await interaction.reply({ content: `❌ **Eroare:** ${result.message}`, ephemeral: true });
+                    }
+                } catch (err) {
+                    logger.error('Shop conversion error', err);
+                    await interaction.reply({ content: '❌ Eroare internă la conversie.', ephemeral: true });
+                }
+            }
+
         } catch (error) {
             logger.error('Interaction error', error);
             if (!interaction.replied && !interaction.deferred) {

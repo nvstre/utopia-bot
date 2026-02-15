@@ -16,30 +16,22 @@ export const command = {
         const embed = new EmbedBuilder()
             .setTitle('🛡️ Panou Principal Admin')
             .setDescription('Selectează o opțiune din meniul de mai jos:')
-            .setColor(0xFF0000)
+            .setColor(0x2B2D31) // Dark Discord Theme
             .addFields(
-                { name: '📂 Submisii Recente', value: 'Vezi ultimele videoclipuri trimise.' },
-                { name: '👤 Verifică Utilizator', value: 'Caută submisii după ID-ul utilizatorului.' },
-                { name: '✅ Verificare Manuală', value: 'Aprobă manual o submisie după ID.' }
+                { name: '📂 Submisii Recente', value: 'Vezi ultimele solicitări intrate in sistem.', inline: true },
+                { name: '👤 Caută User', value: 'Găsește toate submisiile unui utilizator specific.', inline: true }
             );
 
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId('admin_view_recent')
-                    .setLabel('Submisii Recente')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('📂'),
+                    .setLabel('🔍 Submisii Recente')
+                    .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
                     .setCustomId('admin_check_user_btn')
-                    .setLabel('Verifică User')
+                    .setLabel('👤 Caută User')
                     .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('👤'),
-                new ButtonBuilder()
-                    .setCustomId('admin_manual_verify_btn')
-                    .setLabel('Verificare Manuală')
-                    .setStyle(ButtonStyle.Success)
-                    .setEmoji('✅')
             );
 
         await interaction.reply({
