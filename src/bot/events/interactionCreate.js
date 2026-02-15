@@ -1,4 +1,4 @@
-import { Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
 import { client } from '../client.js';
 import { db } from '../../core/database.js';
 import { VerificationService } from '../../services/verification.js';
@@ -7,7 +7,11 @@ import { config } from '../../config/index.js';
 import crypto from 'crypto';
 
 export async function registerInteractionHandler() {
+    console.log('[DEBUG] Registering Interaction Handler...');
     client.on(Events.InteractionCreate, async interaction => {
+        // Debug Log
+        console.log(`[Interaction] Type: ${interaction.type}, CustomID: ${interaction.customId || 'N/A'}, Command: ${interaction.commandName || 'N/A'}`);
+
         try {
             // Chat Input Commands
             if (interaction.isChatInputCommand()) {
@@ -64,36 +68,93 @@ export async function registerInteractionHandler() {
                     });
                 }
 
+                // ADMIN DASHBOARD & BUTTONS
+                if (interaction.customId === 'admin_view_recent') {
+                    if (interaction.user.id !== '1098634271842898071') return interaction.reply({ content: '⛔', ephemeral: true });
+
+                    try {
+                        const recentSubmissions = db.prepare('SELECT * FROM Submission ORDER BY createdAt DESC LIMIT 5').all();
+
+                        if (!recentSubmissions || recentSubmissions.length === 0) {
+                            return interaction.reply({ content: 'ℹ️ **Nu s-au găsit submisii.**', ephemeral: true });
+                        }
+
+                        const embed = new EmbedBuilder().setTitle('🛡️ Submisii Recente').setColor(0xFF0000);
+                        const rows = [];
+
+                        recentSubmissions.forEach((sub, index) => {
+                            const isSus = sub.lastViewCount > 100000;
+                            const statusIcon = isSus ? '⚠️ SUSPICIOUS' : sub.status;
+                            embed.addFields({
+                                name: `ID: ${sub.id.split('-')[0]}... | User: <@${sub.userId}>`,
+                                value: `🔗 [Link](${sub.tikTokUrl})\n👀 Views: **${sub.lastViewCount}** | Status: **${statusIcon}**`
+                            });
+                            rows.push(new ActionRowBuilder().addComponents(
+                                new ButtonBuilder().setCustomId(`admin_delete_${sub.id}`).setLabel('Șterge').setStyle(ButtonStyle.Danger),
+                                new ButtonBuilder().setCustomId(`admin_verify_${sub.id}`).setLabel('Verifică').setStyle(ButtonStyle.Success)
+                            ));
+                        });
+
+                        if (rows.length > 5) rows.length = 5;
+                        await interaction.reply({ embeds: [embed], components: rows, ephemeral: true });
+                    } catch (error) {
+                        logger.error('Admin View Recent Error', error);
+                        await interaction.reply({ content: '❌ Eroare la afișarea submisiilor.', ephemeral: true });
+                    }
+                }
+
+                if (interaction.customId === 'admin_manual_verify_btn') {
+                    if (interaction.user.id !== '1098634271842898071') return interaction.reply({ content: '⛔', ephemeral: true });
+                    const modal = new ModalBuilder().setCustomId('admin_manual_verify_modal').setTitle('Verificare Manuală');
+                    const idInput = new TextInputBuilder().setCustomId('submission_id').setLabel("ID Submisie (Full UUID)").setStyle(TextInputStyle.Short).setRequired(true);
+                    modal.addComponents(new ActionRowBuilder().addComponents(idInput));
+                    await interaction.showModal(modal);
+                }
+
+                if (interaction.customId === 'admin_check_user_btn') {
+                    if (interaction.user.id !== '1098634271842898071') return interaction.reply({ content: '⛔', ephemeral: true });
+                    const modal = new ModalBuilder().setCustomId('admin_check_user_modal').setTitle('Verifică User');
+                    const idInput = new TextInputBuilder().setCustomId('user_id').setLabel("User ID").setStyle(TextInputStyle.Short).setRequired(true);
+                    modal.addComponents(new ActionRowBuilder().addComponents(idInput));
+                    await interaction.showModal(modal);
+                }
+
                 // SHOP MENU HANDLER
                 if (interaction.customId === 'shop_menu') {
-                    const userId = interaction.user.id;
-                    const user = db.prepare('SELECT balance, ucoins FROM User WHERE id = ?').get(userId);
+                    try {
+                        const userId = interaction.user.id;
+                        const user = db.prepare('SELECT balance, ucoins FROM User WHERE id = ?').get(userId);
 
-                    const balance = user ? user.balance.toFixed(2) : '0.00';
-                    const ucoins = user ? (user.ucoins || 0).toFixed(2) : '0.00';
+                        const balance = user ? (user.balance || 0).toFixed(2) : '0.00';
+                        const ucoins = user ? (user.ucoins || 0).toFixed(2) : '0.00';
 
-                    const embed = new EmbedBuilder()
-                        .setTitle('🛒 Magazin Utopia')
-                        .setDescription(
-                            `**Portofelul Tău:**\n` +
-                            `💎 Puncte: **${balance}**\n` +
-                            `🪙 UCoins: **${ucoins}**\n\n` +
-                            `**Schimb:**\n` +
-                            `1 Punct = 1 UCoin\n\n` +
-                            `Apasă pe butonul de mai jos pentru a converti toate punctele în UCoins.`
-                        )
-                        .setColor(0xFFA500);
+                        const embed = new EmbedBuilder()
+                            .setTitle('🛒 Magazin Utopia')
+                            .setDescription(
+                                `**Portofelul Tău:**\n` +
+                                `💎 Puncte: **${balance}**\n` +
+                                `🪙 UCoins: **${ucoins}**\n\n` +
+                                `**Schimb:**\n` +
+                                `1 Punct = 1 UCoin\n\n` +
+                                `Apasă pe butonul de mai jos pentru a converti toate punctele în UCoins.`
+                            )
+                            .setColor(0xFFA500)
+                            .setFooter({ text: 'Utopia Rewards System' });
 
-                    const row = new ActionRowBuilder()
-                        .addComponents(
-                            new ButtonBuilder()
-                                .setCustomId('convert_points')
-                                .setLabel('Transformă Puncte în UCoins')
-                                .setStyle(ButtonStyle.Primary)
-                                .setEmoji('💱')
-                        );
+                        const row = new ActionRowBuilder()
+                            .addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('convert_points')
+                                    .setLabel('Transformă Puncte în UCoins')
+                                    .setStyle(ButtonStyle.Primary)
+                                    .setEmoji('💱')
+                            );
 
-                    await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+                        await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+                    } catch (err) {
+                        logger.error('Shop Menu Error', err);
+                        await interaction.reply({ content: '❌ A apărut o eroare la deschiderea magazinului.', ephemeral: true });
+                    }
                 }
 
                 // CONVERT POINTS HANDLER
@@ -152,9 +213,6 @@ export async function registerInteractionHandler() {
                     if (result.success) {
                         await interaction.editReply(`✅ **Succes!** ${result.message}`);
                     } else {
-                        // Translate common error messages if strictly needed, or ensure service returns generic enough English/Romanian
-                        // For now, let's assume result.message is handled or we just output it. 
-                        // Better: update service to return code, and map here. But for now outputting result.
                         await interaction.editReply(`❌ **Eșuat:** ${result.message}`);
                     }
                 }
@@ -167,7 +225,6 @@ export async function registerInteractionHandler() {
 
                     const subId = interaction.customId.replace('admin_delete_', '');
                     try {
-                        // Transaction for Atomic Delete
                         const deleteTx = db.transaction(() => {
                             db.prepare('DELETE FROM ViewLog WHERE submissionId = ?').run(subId);
                             db.prepare('DELETE FROM Submission WHERE id = ?').run(subId);
